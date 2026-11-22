@@ -36,6 +36,7 @@ include_directories(include third_party)
 # More .cpp files (tokenizer, lexicon, ...) are added to this list as we write them.
 add_executable(build_index
     src/build_index.cpp
+    src/docindex.cpp
 )
 
 # On Windows (MinGW), link the C++ runtime into the .exe so it runs

@@ -4,6 +4,7 @@ data/
 
 # Generated index files
 index/
+index_sample/
 
 # Build outputs
 build/
