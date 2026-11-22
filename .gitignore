@@ -1,0 +1,21 @@
+# Dataset: downloaded zips and cases.jsonl are large and must NOT go to Git
+# (sample/sample.jsonl is NOT ignored; it is our committed test data)
+data/
+
+# Generated index files
+index/
+
+# Build outputs
+build/
+*.exe
+*.o
+*.obj
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Editor / OS files
+.vscode/
+.DS_Store
+Thumbs.db
