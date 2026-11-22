@@ -43,7 +43,7 @@ python scripts/download_dataset.py
 ```
 
 - Downloads all 479 volume zips (375 `ark` + 104 `ark-app`), roughly 30-45 minutes.
-- Drops cases with fewer than 100 words.
+- Drops cases whose judgment (opinion) text has fewer than 100 words.
 - At the end it prints a summary table: volumes downloaded / skipped / failed and
   cases kept / skipped. Expected result: **about 54,359 cases kept, 743 skipped**.
 - If the download stops or some volumes fail, run the same command again. Zips that

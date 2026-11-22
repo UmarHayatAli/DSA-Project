@@ -15,8 +15,8 @@ What the script does:
     STEP 1  Get the list of volumes for each reporter (VolumesMetadata.json).
     STEP 2  Download every volume zip into data/raw/<reporter>/<N>.zip
             (skips zips that are already downloaded, so it can be re-run).
-    STEP 3  Read the cases out of the saved zips, drop cases with fewer
-            than 100 words, and write the rest to:
+    STEP 3  Read the cases out of the saved zips, drop cases whose judgment
+            (opinion) text has fewer than 100 words, and write the rest to:
                 data/cases.jsonl      (all kept cases, one JSON per line)
                 sample/sample.jsonl   (first 200 kept cases, for testing)
     STEP 4  Print a summary.
@@ -98,6 +98,16 @@ def case_entries(zip_file):
     return sorted(names)
 
 
+def opinion_word_count(case):
+    """
+    Number of words in all opinions (judgment texts) of a case.
+    A word = a piece of text between spaces/newlines. Missing parts count as 0.
+    """
+    casebody = case.get("casebody") or {}
+    opinions = casebody.get("opinions") or []
+    return sum(len((opinion.get("text") or "").split()) for opinion in opinions)
+
+
 def new_stats():
     """Counters we keep for each reporter, printed in the final summary."""
     return {
@@ -107,7 +117,7 @@ def new_stats():
         "failed": [],             # volume numbers that could not be downloaded
         "cases_seen": 0,
         "cases_kept": 0,
-        "cases_short": 0,         # dropped: fewer than MIN_WORDS words
+        "cases_short": 0,         # dropped: opinion text has fewer than MIN_WORDS words
         "cases_broken": 0,        # dropped: the JSON file could not be read
     }
 
@@ -234,9 +244,11 @@ def build_dataset(volume_lists, stats):
                             s["cases_broken"] += 1
                             continue
 
-                        # "analysis" or "word_count" may be missing -> treat as 0 words
-                        word_count = (case.get("analysis") or {}).get("word_count") or 0
-                        if word_count < MIN_WORDS:
+                        # Count the words of the actual judgment (opinion) text.
+                        # We do NOT use analysis.word_count: it also counts headnotes,
+                        # party and lawyer names, so some cases with almost no judgment
+                        # text would pass the filter.
+                        if opinion_word_count(case) < MIN_WORDS:
                             s["cases_short"] += 1
                             continue
 
@@ -275,7 +287,7 @@ def print_summary(stats, is_test_run, minutes):
     row("  FAILED", "failed")
     print("  CASES")
     row("  found in the zips", "cases_seen")
-    row(f"  skipped (< {MIN_WORDS} words)", "cases_short")
+    row(f"  skipped (text < {MIN_WORDS} words)", "cases_short")
     row("  skipped (unreadable JSON)", "cases_broken")
     row("  KEPT (in cases.jsonl)", "cases_kept")
     print(line)

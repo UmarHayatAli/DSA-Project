@@ -1,0 +1,4 @@
+# Keep data files byte-for-byte identical on every computer.
+# Without this, Git on Windows may change line endings (LF -> CRLF) on checkout,
+# which would change file sizes and break the byte offsets our indexer stores.
+*.jsonl -text
