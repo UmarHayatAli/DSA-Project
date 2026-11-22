@@ -23,9 +23,13 @@ DSA-Project/
   include/              our C++ header files (.h)
     binary_io.h           helpers to write/read numbers in binary files
     docindex.h            document index: what is stored for each case
+    tokenizer.h           tokenizer: the text-cleaning rules
   src/
     build_index.cpp       main program: reads cases.jsonl and builds the index files
     docindex.cpp          document index: build, save, load
+    tokenizer.cpp         tokenizer: turns text into clean words
+  tests/
+    test_tokenizer.cpp    unit tests for the tokenizer
   third_party/
     json.hpp              nlohmann/json 3.11.3 (MIT licence), JSON parser
   sample/
@@ -187,6 +191,61 @@ Example lines from `docindex.txt`:
 | Build time | about 12 s |
 | `docindex.bin` size | 4.0 MB |
 | `docindex.txt` size | 5.2 MB |
+
+## Tokenizer
+
+### What it is
+
+The tokenizer **cleans text into a list of words** (tokens). Every word gets a position
+number and a flag saying whether it started with a capital letter. The lexicon and the
+indexes are built from these words, and the **same tokenizer cleans the user's search
+query**, so a query word always matches the same word in the cases.
+
+Example:
+
+```
+Input : The appellant's motion for a new trial was DENIED. See Smith v. State (1968).
+Tokens: the@0^ appellant@1 motion@2 for@3 a@4 new@5 trial@6 was@7 denied@8^
+        see@9^ smith@10^ v@11 state@12^ 1968@13          (^ = started with a capital)
+```
+
+### Cleaning rules
+
+| # | Rule | Example |
+|---|---|---|
+| 1 | Join a word broken by a hyphen at a line end | `negli-` + new line + `gence` → `negligence` |
+| 2 | Anything that is not a letter or digit separates words (punctuation, quotes, dashes, §) | `41-2203` → `41`, `2203` |
+| 3 | Remember if the word started with a capital, then lowercase it | `DENIED` → `denied` (capital) |
+| 4 | Remove a possessive 's (straight `'` and curly `’` apostrophe) | `appellant’s` → `appellant` |
+| 5 | Drop words over 30 characters and numbers over 4 digits (keep years) | `123456` dropped, `1968` kept |
+| 6 | Keep stop words (`the`, `and`, `of`, ...), because multi-word search must match all words | `data structures and algorithms` → 4 words |
+| 7 | No stemming | `motions` and `motion` stay different |
+| 8 | Positions continue across the name, head matter and opinions of one case | |
+
+Code: `include/tokenizer.h` (rules and interface), `src/tokenizer.cpp` (implementation).
+
+### How to test it
+
+1. Compile (see *Building the C++ code*).
+2. Run the unit tests (20 tests, one per rule and edge case):
+   ```
+   build/test_tokenizer
+   ```
+   It must end with `20 passed, 0 failed`. (Alternatively: `ctest --test-dir build`.)
+3. Optional: also tokenize a whole data file and print statistics:
+   ```
+   build/test_tokenizer sample/sample.jsonl
+   build/test_tokenizer data/cases.jsonl
+   ```
+
+### Results on the full dataset
+
+| | |
+|---|---|
+| Cases tokenized | 54,359 (name + head matter + all opinions) |
+| Total tokens | 104,633,367 |
+| Distinct words | 221,742 (this will be the size of the lexicon) |
+| Time | about 21 s |
 
 ## Data source and licences
 

@@ -37,10 +37,22 @@ include_directories(include third_party)
 add_executable(build_index
     src/build_index.cpp
     src/docindex.cpp
+    src/tokenizer.cpp
+)
+
+# test_tokenizer: unit tests for the tokenizer.
+add_executable(test_tokenizer
+    tests/test_tokenizer.cpp
+    src/tokenizer.cpp
 )
 
 # On Windows (MinGW), link the C++ runtime into the .exe so it runs
 # without needing extra DLL files next to it.
 if(MINGW)
     target_link_options(build_index PRIVATE -static)
+    target_link_options(test_tokenizer PRIVATE -static)
 endif()
+
+# Lets us run all tests with the command:  ctest --test-dir build
+enable_testing()
+add_test(NAME tokenizer COMMAND test_tokenizer)
