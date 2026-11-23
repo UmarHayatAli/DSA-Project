@@ -23,7 +23,7 @@
 //
 // The forward index is WRITTEN ONE CASE AT A TIME while build_index reads
 // cases.jsonl, so it is never fully in memory (the full dataset has about
-// 104 million hits = 400+ MB). A small offset table remembers where each
+// 104 million hits, forward.bin = 650 MB). A small offset table remembers where each
 // case's record starts, so one case can be read without reading the file.
 //
 // Files written:

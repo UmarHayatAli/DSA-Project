@@ -103,7 +103,7 @@ Details: [Getting the dataset](#getting-the-dataset).
 build/build_index data/cases.jsonl index
 ```
 
-Expected (about 25 seconds): `cases indexed : 54359`, `distinct words : 221742`, and three
+Expected (about 1.5 minutes): `cases indexed : 54359`, `distinct words : 221742`, and three
 lines starting with `CHECK OK`.
 
 **You are now at the current state of the project.**
@@ -332,7 +332,7 @@ The index files are **not in Git**, so everyone creates them on their own comput
    ```
    build/build_index sample/sample.jsonl index_sample
    ```
-3. Build the index for the **full dataset** (about 25 seconds; needs `data/cases.jsonl`,
+3. Build the index for the **full dataset** (about 1.5 minutes with the forward index; needs `data/cases.jsonl`,
    see *Getting the dataset*):
    ```
    build/build_index data/cases.jsonl index
@@ -487,7 +487,7 @@ The lexicon is built together with the document index by the same command:
 3. Build the indexes:
    ```
    build/build_index sample/sample.jsonl index_sample     # 200 cases, under 1 second
-   build/build_index data/cases.jsonl index               # full dataset, about 25 seconds
+   build/build_index data/cases.jsonl index               # full dataset, about 1.5 minutes
    ```
 4. The output must end with `CHECK OK` lines (document index, lexicon and forward index).
    The lexicon check confirms that:
@@ -570,7 +570,7 @@ This is the *Forward Index* from the Google paper (without barrels; those come i
 4. the case's record is **written to `forward.bin` immediately**, and its byte offset is
    remembered.
 
-The full forward index has about 104 million hits (over 400 MB), so it is **never kept in
+The full forward index has about 104 million hits (650 MB), so it is **never kept in
 memory**: only one case at a time. The offset table (`forward_off.bin`, 8 bytes per case) lets
 the program jump straight to any case's record.
 
@@ -618,10 +618,10 @@ for every case:  [docID] [numTokens] [numWords]
 
 | | 200-case sample | Full dataset |
 |---|---|---|
-| Hits stored | 738,633 | (after full run) |
-| `forward.bin` size | 4.1 MB | (after full run) |
-| `forward_off.bin` size | 1.6 KB | (after full run) |
-| Build time (all indexes together) | 0.5 s | (after full run) |
+| Hits stored | 738,633 | 104,633,367 |
+| `forward.bin` size | 4.1 MB | 649 MB |
+| `forward_off.bin` size | 1.6 KB | 435 KB |
+| Build time (all indexes together) | 0.5 s | about 82 s |
 
 ## Data source and licences
 
