@@ -24,12 +24,15 @@ DSA-Project/
     binary_io.h           helpers to write/read numbers in binary files
     docindex.h            document index: what is stored for each case
     tokenizer.h           tokenizer: the text-cleaning rules
+    lexicon.h             lexicon: word -> wordID, df, cf
   src/
     build_index.cpp       main program: reads cases.jsonl and builds the index files
     docindex.cpp          document index: build, save, load
     tokenizer.cpp         tokenizer: turns text into clean words
+    lexicon.cpp           lexicon: build, save, load, look up words
   tests/
     test_tokenizer.cpp    unit tests for the tokenizer
+    test_lexicon.cpp      unit tests for the lexicon
   third_party/
     json.hpp              nlohmann/json 3.11.3 (MIT licence), JSON parser
   sample/
@@ -148,20 +151,21 @@ This is the *Document Index* from the Google paper. Code: `include/docindex.h`,
 ### How to build it
 
 The index files are **not in Git**, so everyone creates them on their own computer.
+`build_index` builds the document index and the lexicon together in one run.
 
 1. Make sure the program is compiled (see *Building the C++ code* above).
 2. Build the index for the **200-case sample** (under 1 second):
    ```
    build/build_index sample/sample.jsonl index_sample
    ```
-3. Build the index for the **full dataset** (about 12 seconds; needs `data/cases.jsonl`,
+3. Build the index for the **full dataset** (about 25 seconds; needs `data/cases.jsonl`,
    see *Getting the dataset*):
    ```
    build/build_index data/cases.jsonl index
    ```
-4. Check the output. The program prints a summary and must end with:
+4. Check the output. Under *Checks*, the program must print:
    ```
-   CHECK OK: saved file loads back identically and offsets point to the right cases
+   CHECK OK: docindex loads back identically and offsets point to the right cases
    ```
    Expected for the full dataset: `cases indexed : 54359`.
 
@@ -246,6 +250,106 @@ Code: `include/tokenizer.h` (rules and interface), `src/tokenizer.cpp` (implemen
 | Total tokens | 104,633,367 |
 | Distinct words | 221,742 (this will be the size of the lexicon) |
 | Time | about 21 s |
+
+## Lexicon
+
+### What it is
+
+The lexicon is a **dictionary of every distinct word** in all the cases. Each word gets its
+own number, the **wordID**:
+
+```
+goings  -> 0
+against -> 1
+mills   -> 2
+...
+negligence -> 1319
+```
+
+For each word it also stores two counts:
+
+| Count | Meaning | Example: `negligence` |
+|---|---|---|
+| **df** (document frequency) | in how many cases the word appears | 6,635 cases |
+| **cf** (collection frequency) | how many times it appears in all cases together | 42,941 times |
+
+### Why we need it
+
+1. **Short numbers instead of words.** The forward and inverted indexes store wordIDs
+   (4 bytes each) instead of repeating words like "negligence" millions of times.
+2. **Turning a search into numbers.** When a user searches "negligence", the engine looks the
+   word up in the lexicon, gets wordID 1319, and then finds that word's list of cases in
+   the inverted index. A word that is not in the lexicon appears in no case.
+3. **Ranking.** df shows how rare a word is: a rare word (small df) like "negligence" says
+   more about a case than a common word like "the" (in every case).
+
+This is the *Lexicon* from the Google paper.
+
+### How it is built
+
+`build_index` reads `cases.jsonl` once. For each case it cleans the name, head matter and
+opinions with the tokenizer, and for every word:
+
+- if the word is new, it gets the next free wordID (so wordIDs follow the order in which
+  words first appear: the first word of the first case is 0);
+- its cf goes up by 1;
+- its df goes up by 1 only the first time the word is seen in that case.
+
+A **hash map** (`std::unordered_map`, word → wordID) finds a word's ID in constant time on
+average, so building stays fast even with 221,742 words.
+
+Code: `include/lexicon.h`, `src/lexicon.cpp`, used by `src/build_index.cpp`.
+
+### How to build and test it
+
+The lexicon is built together with the document index by the same command:
+
+1. Compile (see *Building the C++ code*).
+2. Run the lexicon unit tests (10 tests):
+   ```
+   build/test_lexicon
+   ```
+   It must end with `10 passed, 0 failed`. (`ctest --test-dir build` runs all tests.)
+3. Build the indexes:
+   ```
+   build/build_index sample/sample.jsonl index_sample     # 200 cases, under 1 second
+   build/build_index data/cases.jsonl index               # full dataset, about 25 seconds
+   ```
+4. The output must end with two lines starting with `CHECK OK` (document index and lexicon).
+   The lexicon check confirms that:
+   - the saved file loads back with exactly the same words and counts,
+   - the sum of all cf values equals the total number of words in all cases,
+   - every word has 1 ≤ df ≤ cf, and df is never more than the number of cases,
+   - looking up each word gives back its own wordID (no word appears twice).
+
+### Files created
+
+| File | Content |
+|---|---|
+| `lexicon.bin` | Binary version, used by the search engine (3.8 MB for the full dataset) |
+| `lexicon.txt` | Same data as readable text, one line per word |
+
+Example lines from `lexicon.txt` (full dataset):
+
+```
+# wordID  word        df      cf
+0         goings      20      24
+1         against     38761   152661
+1278      contract    15104   128554
+1319      negligence  6635    42941
+11184     theft       1767    5197
+```
+
+### Results on the full dataset
+
+| | |
+|---|---|
+| Distinct words | 221,742 |
+| Total words (tokens) | 104,633,367 |
+| Words that appear in only one case | 120,502 (mostly names, typos and OCR errors) |
+| Most frequent words | the (8.9 million times), of, to, and, in, that, a, was, for, is |
+| Build time (document index + lexicon) | about 23 s |
+| `lexicon.bin` size | 3.8 MB |
 
 ## Data source and licences
 
