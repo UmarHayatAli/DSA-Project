@@ -23,7 +23,7 @@ project. All commands are typed in the VS Code terminal (PowerShell) unless stat
 | Tokenizer | ✅ Done |
 | Lexicon | ✅ Done |
 | Forward index | ✅ Done |
-| Inverted index, checks | ⏳ To do (Part 1, due 29 Nov) |
+| Inverted index, checks | ⏳ Next (Part 1, due 29 Nov) |
 | Barrels | ⏳ To do (due 6 Dec) |
 | Search, ranking, autocomplete, semantic search, document addition, UI, deployment | ⏳ To do (due 16 Dec) |
 
