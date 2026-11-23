@@ -9,6 +9,123 @@ stored in files (no database).
 
 **Team:** M. Aizaz Wajid (548772), Umar Hayat Ali (561900), Tahreem Zafar (547588)
 
+## Quick start for team members
+
+Follow these steps once, in order, to get from a fresh clone to the current state of the
+project. All commands are typed in the VS Code terminal (PowerShell) unless stated otherwise.
+
+### Progress so far
+
+| Step | Status |
+|---|---|
+| Dataset download (54,359 cases) | ✅ Done |
+| Document index | ✅ Done |
+| Tokenizer | ✅ Done |
+| Lexicon | ✅ Done |
+| Forward index | ⏳ Next |
+| Inverted index, checks | ⏳ To do (Part 1, due 29 Nov) |
+| Barrels | ⏳ To do (due 6 Dec) |
+| Search, ranking, autocomplete, semantic search, document addition, UI, deployment | ⏳ To do (due 16 Dec) |
+
+### Step 1: Install the tools (one-time, about 20 minutes)
+
+- **Git** and **Python 3.10 or newer** (check with `git --version` and `python --version`).
+- **C++ tools (g++, CMake, Ninja):** follow
+  [Installing the C++ tools on Windows](#installing-the-c-tools-on-windows-one-time) below.
+  Do not use an old MinGW compiler (g++ 6.x); it does not support what we need.
+
+### Step 2: Get the code
+
+```
+git clone https://github.com/UmarHayatAli/DSA-Project.git
+cd DSA-Project
+```
+
+**Open the `DSA-Project` folder itself in VS Code** (File, Open Folder), so that every new
+terminal starts in the right place. All commands below are run from this folder.
+
+To work on your own changes, make your own branch (use your name), for example:
+
+```
+git switch -c AizazWajid
+```
+
+### Step 3: Compile the C++ code
+
+```
+cmake -S . -B build -G Ninja
+cmake --build build
+```
+
+Expected: no errors, and the programs `build/build_index.exe`, `build/test_tokenizer.exe`
+and `build/test_lexicon.exe` exist.
+
+### Step 4: Run the unit tests
+
+```
+ctest --test-dir build
+```
+
+Expected: `100% tests passed`.
+
+### Step 5: Build the indexes on the 200-case sample (works immediately)
+
+The sample (`sample/sample.jsonl`) is already in the repository, so you can start working
+without downloading anything:
+
+```
+build/build_index sample/sample.jsonl index_sample
+```
+
+Expected: two lines starting with `CHECK OK`, and the folder `index_sample/` now contains
+`docindex.bin/.txt` and `lexicon.bin/.txt`. Open the `.txt` files in VS Code to look at them.
+
+**For writing and testing code, the sample is enough.** The full dataset is only needed for
+final testing and for measuring speed and memory.
+
+### Step 6: Download the full dataset (one-time, about 30-45 minutes)
+
+```
+python scripts/download_dataset.py
+```
+
+Expected at the end: `KEPT (in cases.jsonl) ... 54,359` and `RESULT: OK`.
+If it stops or some volumes fail, run the same command again; it continues where it
+stopped. Details: [Getting the dataset](#getting-the-dataset).
+
+### Step 7: Build the indexes on the full dataset
+
+```
+build/build_index data/cases.jsonl index
+```
+
+Expected (about 25 seconds): `cases indexed : 54359`, `distinct words : 221742`, and two
+lines starting with `CHECK OK`.
+
+**You are now at the current state of the project.**
+
+### Everyday workflow
+
+```
+git pull                        # get the latest code from GitHub
+cmake --build build             # recompile after pulling or changing code
+ctest --test-dir build          # run the tests
+git add <files>                 # stage your changes
+git commit -m "What you changed"
+git push                        # first time on a new branch: git push -u origin <branch>
+```
+
+Never commit `data/`, `index/`, `index_sample/` or `build/` (`.gitignore` already blocks them).
+
+### Common problems
+
+| Problem | Cause and fix |
+|---|---|
+| `can't open file ...\scripts\download_dataset.py` | The terminal is in the wrong folder. Run `cd DSA-Project` first, or open the `DSA-Project` folder in VS Code. |
+| `cmake` or `g++` is "not recognized" | The C++ tools are not on `Path`, or VS Code was not restarted after adding them. |
+| `g++ --version` shows 6.x | An old MinGW is found first on `Path`. Remove `C:\MinGW\bin` from `Path` or move `C:\msys64\ucrt64\bin` above it, then restart VS Code. |
+| `Error: cannot open data/cases.jsonl` | The full dataset is not downloaded yet (Step 6). Use the sample instead. |
+
 ## Project structure
 
 ```
