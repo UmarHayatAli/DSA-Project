@@ -8,7 +8,8 @@
 //   Task 3  document index  -> docindex.bin, docindex.txt
 //   Task 4  tokenizer       (cleans the text of each case into words)
 //   Task 5  lexicon         -> lexicon.bin,  lexicon.txt
-// Coming next: forward index, inverted index.
+//   Task 6  forward index   -> forward.bin, forward_off.bin, forward.txt
+// Coming next: inverted index.
 //
 // Usage:
 //   build_index <cases.jsonl> [output folder]
@@ -24,6 +25,7 @@
 #include <vector>
 
 #include "docindex.h"
+#include "forward_index.h"
 #include "json.hpp"
 #include "lexicon.h"
 #include "tokenizer.h"
@@ -35,15 +37,18 @@ namespace fs = std::filesystem;
 // Tokenize the three indexed fields of one case, in this order:
 //   name (full case name), head matter (headnotes/summary), every opinion text.
 // Positions continue across the fields (tokenizer rule 8).
+// Returns how many of the tokens come from the name (the case title);
+// the forward index marks those hits as title hits.
 // ---------------------------------------------------------------
-static void tokenizeCase(const json& c, std::vector<Token>& tokens) {
+static size_t tokenizeCase(const json& c, std::vector<Token>& tokens) {
     tokens.clear();
     uint32_t position = 0;
 
     if (c.contains("name") && c["name"].is_string()) {
         tokenize(c["name"].get_ref<const std::string&>(), position, tokens);
     }
-    if (!c.contains("casebody") || !c["casebody"].is_object()) return;
+    size_t titleTokens = tokens.size();
+    if (!c.contains("casebody") || !c["casebody"].is_object()) return titleTokens;
     const json& body = c["casebody"];
 
     if (body.contains("head_matter") && body["head_matter"].is_string()) {
@@ -56,6 +61,7 @@ static void tokenizeCase(const json& c, std::vector<Token>& tokens) {
             }
         }
     }
+    return titleTokens;
 }
 
 // ---------------------------------------------------------------
@@ -147,6 +153,128 @@ static bool checkLexicon(const Lexicon& built, const std::string& binPath,
     return true;
 }
 
+// Are two forward-index records exactly the same?
+static bool sameForwardDoc(const ForwardDoc& a, const ForwardDoc& b) {
+    if (a.docID != b.docID || a.numTokens != b.numTokens || a.words.size() != b.words.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.words.size(); i++) {
+        if (a.words[i].wordID != b.words[i].wordID || a.words[i].hits != b.words[i].hits) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------
+// Check the saved forward index:
+//  1. read forward.bin from start to end; for every case:
+//     - wordIDs are valid and strictly increasing (each word once),
+//     - every hit list is non-empty and sorted by position,
+//     - the positions of all hits are exactly 0, 1, ..., numTokens-1
+//       (every word of the case is stored once, none is lost),
+//  2. counting from the forward index gives the same df and cf as the
+//     lexicon for EVERY word, and the total number of hits = total tokens,
+//  3. for the last, middle and first case: jump to its record using the
+//     offset table, re-read the case from cases.jsonl, tokenize it again,
+//     and check that the stored record is exactly the same.
+// ---------------------------------------------------------------
+static bool checkForwardIndex(const Lexicon& lex, const DocIndex& docs,
+                              const std::string& binPath, const std::string& offPath,
+                              const std::string& casesPath, uint64_t totalTokens) {
+    ForwardIndexReader reader;
+    if (!reader.open(binPath, offPath) || reader.size() != docs.size()) {
+        std::cout << "  CHECK FAILED: could not open " << binPath << " correctly\n";
+        return false;
+    }
+
+    std::vector<uint32_t> df(lex.size(), 0), cf(lex.size(), 0);
+    std::vector<bool> seen;
+    uint64_t totalHits = 0;
+    ForwardDoc doc;
+    for (uint32_t id = 0; id < docs.size(); id++) {
+        if (!reader.next(doc)) {
+            std::cout << "  CHECK FAILED: could not read the record of docID " << id << "\n";
+            return false;
+        }
+        seen.assign(doc.numTokens, false);
+        uint64_t hitsInDoc = 0;
+        for (size_t i = 0; i < doc.words.size(); i++) {
+            const ForwardEntry& e = doc.words[i];
+            if (e.wordID >= lex.size() || (i > 0 && e.wordID <= doc.words[i - 1].wordID) ||
+                e.hits.empty()) {
+                std::cout << "  CHECK FAILED: bad word list in docID " << id << "\n";
+                return false;
+            }
+            for (size_t h = 0; h < e.hits.size(); h++) {
+                uint32_t p = hitPosition(e.hits[h]);
+                if (p >= doc.numTokens || seen[p] ||
+                    (h > 0 && p <= hitPosition(e.hits[h - 1]))) {
+                    std::cout << "  CHECK FAILED: bad positions in docID " << id << "\n";
+                    return false;
+                }
+                seen[p] = true;
+            }
+            df[e.wordID]++;
+            cf[e.wordID] += static_cast<uint32_t>(e.hits.size());
+            hitsInDoc += e.hits.size();
+        }
+        if (hitsInDoc != doc.numTokens) {
+            std::cout << "  CHECK FAILED: docID " << id << " has " << hitsInDoc
+                      << " hits but " << doc.numTokens << " tokens\n";
+            return false;
+        }
+        totalHits += hitsInDoc;
+    }
+    if (totalHits != totalTokens) {
+        std::cout << "  CHECK FAILED: total hits (" << totalHits << ") != total tokens ("
+                  << totalTokens << ")\n";
+        return false;
+    }
+    for (uint32_t w = 0; w < lex.size(); w++) {
+        if (df[w] != lex.get(w).df || cf[w] != lex.get(w).cf) {
+            std::cout << "  CHECK FAILED: df/cf of \"" << lex.get(w).word
+                      << "\" in the forward index differ from the lexicon\n";
+            return false;
+        }
+    }
+
+    // Random access + rebuild from the original text.
+    std::ifstream cases(casesPath, std::ios::binary);
+    std::vector<Token> tokens;
+    std::vector<uint32_t> wordIDs;
+    ForwardDoc stored, rebuilt;
+    uint32_t n = static_cast<uint32_t>(docs.size());
+    uint32_t samples[] = {n - 1, n / 2, 0};        // out of order on purpose (tests seeking)
+    for (uint32_t id : samples) {
+        const DocInfo& d = docs.get(id);
+        std::string line(d.length, '\0');
+        cases.clear();
+        cases.seekg(static_cast<std::streamoff>(d.offset));
+        cases.read(&line[0], d.length);
+        json c = json::parse(line, nullptr, false);
+        size_t titleTokens = tokenizeCase(c, tokens);
+        wordIDs.resize(tokens.size());
+        for (size_t i = 0; i < tokens.size(); i++) {
+            if (!lex.lookup(tokens[i].word, wordIDs[i])) {
+                std::cout << "  CHECK FAILED: word \"" << tokens[i].word << "\" not in lexicon\n";
+                return false;
+            }
+        }
+        buildForwardDoc(id, tokens, wordIDs, titleTokens, rebuilt);
+        if (!reader.read(id, stored) || !sameForwardDoc(stored, rebuilt)) {
+            std::cout << "  CHECK FAILED: record of docID " << id
+                      << " differs from the re-tokenized case\n";
+            return false;
+        }
+        std::cout << "  docID " << id << " -> " << stored.numTokens << " tokens, "
+                  << stored.words.size() << " distinct words, matches the case text\n";
+    }
+    std::cout << "  CHECK OK: forward index has every word of every case once, df/cf match "
+                 "the lexicon, random access matches the case text\n";
+    return true;
+}
+
 // Print the most frequent words (by cf), to see that the counts make sense.
 static void printTopWords(const Lexicon& lex, size_t howMany) {
     std::vector<uint32_t> ids(lex.size());
@@ -177,11 +305,21 @@ int main(int argc, char* argv[]) {
     }
     fs::create_directories(outDir);
 
+    std::string fwdBin = outDir + "/forward.bin", fwdOff = outDir + "/forward_off.bin";
+    std::string fwdTxt = outDir + "/forward.txt";
+    ForwardIndexWriter forward;
+    if (!forward.open(fwdBin)) {
+        std::cerr << "Error: cannot create " << fwdBin << "\n";
+        return 1;
+    }
+
     auto start = std::chrono::steady_clock::now();
 
     DocIndex docIndex;
     Lexicon lexicon;
     std::vector<Token> tokens;      // reused for every case to avoid re-allocating
+    std::vector<uint32_t> wordIDs;  // wordIDs[i] = wordID of tokens[i]
+    ForwardDoc forwardDoc;
     std::string line;
     uint64_t offset = 0;            // byte position of the current line in the file
     uint64_t totalTokens = 0;
@@ -204,11 +342,19 @@ int main(int argc, char* argv[]) {
         uint32_t docID = docIndex.add(c, lineStart, static_cast<uint32_t>(line.size()));
 
         // Tasks 4 + 5: clean the text into words and record every word in the lexicon.
-        tokenizeCase(c, tokens);
-        for (const Token& t : tokens) {
-            lexicon.addOccurrence(t.word, docID);
+        size_t titleTokens = tokenizeCase(c, tokens);
+        wordIDs.resize(tokens.size());
+        for (size_t i = 0; i < tokens.size(); i++) {
+            wordIDs[i] = lexicon.addOccurrence(tokens[i].word, docID);
         }
         totalTokens += tokens.size();
+
+        // Task 6: group the case's words by wordID and append it to the forward index.
+        buildForwardDoc(docID, tokens, wordIDs, titleTokens, forwardDoc);
+        if (!forward.add(forwardDoc)) {
+            std::cerr << "Error: could not write " << fwdBin << "\n";
+            return 1;
+        }
 
         if (docIndex.size() % 10000 == 0) {
             std::cout << "  " << docIndex.size() << " cases processed...\n";
@@ -225,6 +371,22 @@ int main(int argc, char* argv[]) {
     if (!lexicon.saveBinary(lexBin) || !lexicon.saveText(lexTxt)) {
         std::cerr << "Error: could not write the lexicon to " << outDir << "\n";
         return 1;
+    }
+
+    if (!forward.close(fwdOff)) {
+        std::cerr << "Error: could not finish the forward index in " << outDir << "\n";
+        return 1;
+    }
+    const size_t FORWARD_TEXT_CASES = 20;     // only the first cases as text (see forward_index.h)
+    {
+        ForwardIndexReader reader;
+        if (!reader.open(fwdBin, fwdOff) ||
+            !saveForwardText(reader, fwdTxt, FORWARD_TEXT_CASES,
+                             [&](uint32_t w) { return lexicon.get(w).word; },
+                             [&](uint32_t d) { return docIndex.get(d).title; })) {
+            std::cerr << "Error: could not write " << fwdTxt << "\n";
+            return 1;
+        }
     }
 
     double seconds = std::chrono::duration<double>(
@@ -250,9 +412,17 @@ int main(int argc, char* argv[]) {
     std::cout << "  " << lexBin << " : " << fs::file_size(lexBin) << " bytes\n";
     std::cout << "  " << lexTxt << " : " << fs::file_size(lexTxt) << " bytes\n";
 
+    std::cout << "\nForward index\n";
+    std::cout << "  cases            : " << docIndex.size() << "\n";
+    std::cout << "  hits stored      : " << forward.totalHits() << "\n";
+    std::cout << "  " << fwdBin << " : " << fs::file_size(fwdBin) << " bytes\n";
+    std::cout << "  " << fwdOff << " : " << fs::file_size(fwdOff) << " bytes\n";
+    std::cout << "  " << fwdTxt << " : first " << FORWARD_TEXT_CASES << " cases only\n";
+
     std::cout << "\nChecks\n";
     if (docIndex.size() == 0) return 1;
     if (!checkDocIndex(docIndex, docBin, inputPath)) return 1;
     if (!checkLexicon(lexicon, lexBin, totalTokens, docIndex.size())) return 1;
+    if (!checkForwardIndex(lexicon, docIndex, fwdBin, fwdOff, inputPath, totalTokens)) return 1;
     return 0;
 }

@@ -22,7 +22,7 @@ project. All commands are typed in the VS Code terminal (PowerShell) unless stat
 | Document index | ✅ Done |
 | Tokenizer | ✅ Done |
 | Lexicon | ✅ Done |
-| Forward index | ⏳ Next |
+| Forward index | ✅ Done |
 | Inverted index, checks | ⏳ To do (Part 1, due 29 Nov) |
 | Barrels | ⏳ To do (due 6 Dec) |
 | Search, ranking, autocomplete, semantic search, document addition, UI, deployment | ⏳ To do (due 16 Dec) |
@@ -57,8 +57,8 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ```
 
-Expected: no errors, and the programs `build/build_index.exe`, `build/test_tokenizer.exe`
-and `build/test_lexicon.exe` exist.
+Expected: no errors, and the programs `build/build_index.exe`, `build/test_tokenizer.exe`,
+`build/test_lexicon.exe` and `build/test_forward_index.exe` exist.
 
 ### Step 4: Run the unit tests
 
@@ -77,8 +77,9 @@ without downloading anything:
 build/build_index sample/sample.jsonl index_sample
 ```
 
-Expected: two lines starting with `CHECK OK`, and the folder `index_sample/` now contains
-`docindex.bin/.txt` and `lexicon.bin/.txt`. Open the `.txt` files in VS Code to look at them.
+Expected: three lines starting with `CHECK OK`, and the folder `index_sample/` now contains
+`docindex.bin/.txt`, `lexicon.bin/.txt` and `forward.bin`, `forward_off.bin`, `forward.txt`.
+Open the `.txt` files in VS Code to look at them.
 
 **For writing and testing code, the sample is enough.** The full dataset is only needed for
 final testing and for measuring speed and memory.
@@ -91,7 +92,10 @@ python scripts/download_dataset.py
 
 Expected at the end: `KEPT (in cases.jsonl) ... 54,359` and `RESULT: OK`.
 If it stops or some volumes fail, run the same command again; it continues where it
-stopped. Details: [Getting the dataset](#getting-the-dataset).
+stopped. To see whether it is still running or has paused, run
+`python scripts/check_download.py` in a second terminal (see
+[Is the download running, paused or finished?](#4-is-the-download-running-paused-or-finished)).
+Details: [Getting the dataset](#getting-the-dataset).
 
 ### Step 7: Build the indexes on the full dataset
 
@@ -99,7 +103,7 @@ stopped. Details: [Getting the dataset](#getting-the-dataset).
 build/build_index data/cases.jsonl index
 ```
 
-Expected (about 25 seconds): `cases indexed : 54359`, `distinct words : 221742`, and two
+Expected (about 25 seconds): `cases indexed : 54359`, `distinct words : 221742`, and three
 lines starting with `CHECK OK`.
 
 **You are now at the current state of the project.**
@@ -137,19 +141,23 @@ DSA-Project/
   scripts/
     download_dataset.py   downloads the dataset and builds data/cases.jsonl
     test_one_volume.py    quick check that one volume can be downloaded and read
+    check_download.py     shows how far the dataset download has got (running / paused / finished)
   include/              our C++ header files (.h)
     binary_io.h           helpers to write/read numbers in binary files
     docindex.h            document index: what is stored for each case
     tokenizer.h           tokenizer: the text-cleaning rules
     lexicon.h             lexicon: word -> wordID, df, cf
+    forward_index.h       forward index: docID -> wordIDs + hit lists
   src/
     build_index.cpp       main program: reads cases.jsonl and builds the index files
     docindex.cpp          document index: build, save, load
     tokenizer.cpp         tokenizer: turns text into clean words
     lexicon.cpp           lexicon: build, save, load, look up words
+    forward_index.cpp     forward index: build, write, read
   tests/
     test_tokenizer.cpp    unit tests for the tokenizer
     test_lexicon.cpp      unit tests for the lexicon
+    test_forward_index.cpp  unit tests for the forward index
   third_party/
     json.hpp              nlohmann/json 3.11.3 (MIT licence), JSON parser
   sample/
@@ -222,6 +230,55 @@ python scripts/download_dataset.py
   cases kept / skipped. Expected result: **54,359 cases kept, 743 skipped**.
 - If the download stops or some volumes fail, run the same command again. Zips that
   are already downloaded are skipped, so it continues where it left off.
+
+### 4. Is the download running, paused or finished?
+
+While it runs, the script prints **one line per volume**, for example:
+
+```
+  [ark 63/375] volume 63: downloaded, 120 cases
+  [ark 64/375] volume 64: downloaded, 98 cases
+```
+
+`[ark 63/375]` means volume 63 of 375 of the `ark` reporter is done. After all 375 `ark`
+volumes come the 104 `ark-app` volumes, then STEP 3 (building `cases.jsonl`) and the SUMMARY.
+
+To check the progress at any time, open a **second terminal** (do not close the first one) and run:
+
+```
+python scripts/check_download.py
+```
+
+Example output:
+
+```
+  ark        63 / 375 volumes downloaded
+  ark-app     0 / 104 volumes downloaded
+  total      63 / 479  (13%)
+  newest zip: 0.4 minutes ago
+
+  STATUS: downloading...
+```
+
+How to recognise each state:
+
+| What you see | Meaning | What to do |
+|---|---|---|
+| New `[ark N/375]` lines keep appearing, `newest zip` is under a minute or two ago | **Running** | Wait |
+| Lines like `attempt 1: timed out` | The server is slow; the script retries by itself (several attempts per volume) | Wait |
+| No new line for several minutes, and `check_download.py` says `PROBABLY PAUSED/STOPPED` | **Paused or stopped**: internet dropped, laptop went to sleep, the terminal or VS Code was closed, or Ctrl+C was pressed | Run `python scripts/download_dataset.py` again |
+| `[ark N/375] volume N: FAILED` | That volume failed after all retries; the script goes on with the next one | At the end, run the script again to retry the failed volumes |
+| Terminal shows `SUMMARY` and `RESULT: OK` | **Finished** | Go on with Step 7 |
+
+Tips:
+
+- **Do not let the laptop sleep** during the download (Settings, System, Power: set "sleep" to
+  Never while plugged in). Sleep and closing the terminal stop the download.
+- If the terminal looks frozen on Windows, you may have clicked inside it, which turns on
+  "select mode" and **pauses the output** (the title starts with `Select`). Press `Esc` or
+  `Enter` to continue.
+- Re-running is always safe: finished zips are kept and skipped (`already had`), and a
+  half-downloaded volume (`.zip.part`) is downloaded again.
 
 ### Files produced
 
@@ -432,7 +489,7 @@ The lexicon is built together with the document index by the same command:
    build/build_index sample/sample.jsonl index_sample     # 200 cases, under 1 second
    build/build_index data/cases.jsonl index               # full dataset, about 25 seconds
    ```
-4. The output must end with two lines starting with `CHECK OK` (document index and lexicon).
+4. The output must end with `CHECK OK` lines (document index, lexicon and forward index).
    The lexicon check confirms that:
    - the saved file loads back with exactly the same words and counts,
    - the sum of all cf values equals the total number of words in all cases,
@@ -467,6 +524,104 @@ Example lines from `lexicon.txt` (full dataset):
 | Most frequent words | the (8.9 million times), of, to, and, in, that, a, was, for, is |
 | Build time (document index + lexicon) | about 23 s |
 | `lexicon.bin` size | 3.8 MB |
+
+## Forward index
+
+### What it is
+
+The forward index stores, **for every case, which words it contains and where**. For each
+docID it keeps the number of words in the case and a list of `wordID → hits`, sorted by
+wordID. A **hit** is one occurrence of the word:
+
+```
+docID 0  tokens 3377  words 639  Goings v. Mills
+  0   goings    4    0^T 3^ 1416^ 3366^
+  1   against   5    1T 4 757 950 1914
+  7   court     70   10^ 135^ 153 220^ ...
+```
+
+Each hit is packed into 4 bytes:
+
+| Bits | Meaning |
+|---|---|
+| 31 ... 2 | **position** of the word in the case (0, 1, 2, ...) |
+| 1 | **title** flag (`T`): the word is in the case name, e.g. *Goings v. Mills* |
+| 0 | **capital** flag (`^`): the word started with a capital letter |
+
+### Why we need it
+
+1. **It is the input for the inverted index.** The inverted index (wordID → cases) is made
+   by "turning around" the forward index, exactly as in the Google paper.
+2. **Positions** allow phrase and proximity search later (words next to each other).
+3. **Title hits** are like the paper's "fancy hits": a word in the case name counts more in
+   ranking than a word deep in the opinion text.
+4. **The number of words per case** is needed for ranking (longer cases contain more words by chance).
+
+This is the *Forward Index* from the Google paper (without barrels; those come in a later step).
+
+### How it is built
+
+`build_index` builds it in the same single pass as the document index and the lexicon. For each case:
+
+1. the tokenizer cleans the name, head matter and opinions (positions run on across them),
+2. every token gets its wordID from the lexicon,
+3. the pairs (wordID, token number) are **sorted**, which puts all hits of the same word
+   together, already in position order,
+4. the case's record is **written to `forward.bin` immediately**, and its byte offset is
+   remembered.
+
+The full forward index has about 104 million hits (over 400 MB), so it is **never kept in
+memory**: only one case at a time. The offset table (`forward_off.bin`, 8 bytes per case) lets
+the program jump straight to any case's record.
+
+Code: `include/forward_index.h`, `src/forward_index.cpp`, used by `src/build_index.cpp`.
+
+### How to build and test it
+
+1. Compile (see *Building the C++ code*).
+2. Run the forward index unit tests (19 tests):
+   ```
+   build/test_forward_index
+   ```
+   It must end with `19 passed, 0 failed`.
+3. Build the indexes (same command as before):
+   ```
+   build/build_index sample/sample.jsonl index_sample
+   build/build_index data/cases.jsonl index
+   ```
+4. The output must end with three `CHECK OK` lines. The forward index check confirms that:
+   - every case has every one of its words exactly once: the positions of all hits are
+     exactly 0, 1, ..., (number of words − 1), with no gaps and no duplicates,
+   - wordIDs in each case are sorted and valid, and each hit list is sorted by position,
+   - counting from the forward index gives **the same df and cf as the lexicon for every
+     word**, and the total number of hits equals the total number of tokens,
+   - for the last, middle and first case, jumping to the record through the offset table and
+     re-tokenizing the original case from `cases.jsonl` gives exactly the same record.
+
+### Files created
+
+| File | Content |
+|---|---|
+| `forward.bin` | Binary forward index, one record per case, in docID order |
+| `forward_off.bin` | docID → byte offset of its record in `forward.bin` |
+| `forward.txt` | Readable text for the **first 20 cases only** (the full index as text would be over 1 GB) |
+
+Binary layout of `forward.bin` (all numbers 4-byte little-endian):
+
+```
+["FWDI"] [number of cases]
+for every case:  [docID] [numTokens] [numWords]
+                 numWords times: [wordID] [numHits] [hit] [hit] ...
+```
+
+### Results
+
+| | 200-case sample | Full dataset |
+|---|---|---|
+| Hits stored | 738,633 | (after full run) |
+| `forward.bin` size | 4.1 MB | (after full run) |
+| `forward_off.bin` size | 1.6 KB | (after full run) |
+| Build time (all indexes together) | 0.5 s | (after full run) |
 
 ## Data source and licences
 
