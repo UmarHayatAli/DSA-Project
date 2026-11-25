@@ -28,9 +28,14 @@ This README has three parts:
 | Tokenizer | Cleans text into words (also used later for search queries) |
 | Lexicon | word → wordID, plus how often each word appears |
 | Forward index | case → its words and their positions |
-| Inverted index | word → the cases that contain it, with positions |
+| Inverted index ⚠️ | word → the cases that contain it, with positions (code written, **not yet compiled or tested**) |
 
 Each part is explained in [Part 3](#part-3-the-work-done-explained).
+
+> ⚠️ **Inverted index not verified yet.** The code is in `main`, but it has not been compiled
+> or run on any machine. The first team member who builds it should run Step 4 and Step 5,
+> confirm `100% tests passed out of 4` and four `CHECK OK` lines, then remove this note and the
+> ⚠️ marks. If anything fails, fix it before starting the barrels.
 
 ### Next step ⏳ Barrels (deadline: 6 Dec)
 
@@ -69,7 +74,7 @@ all lists in order and can be reused.
 
 ### Left (later deadlines)
 
-| Part  Requirement from the course description | Deadline |
+| Part | Requirement from the course description | Deadline |
 |---|---|---|
 | Single-word search | Results in under 500 ms | 16 Dec |
 | Multi-word search | All words must match (also "and"), under 1.5 s for 5 words | 16 Dec |
@@ -504,6 +509,9 @@ for every case:  [docID] [numTokens] [numWords]
 
 ## 6. Inverted index
 
+> ⚠️ Not compiled or tested yet (see the note in Part 1). The results below are what the code
+> is designed to produce; the sizes are calculated from the forward index, not measured.
+
 **What it is:** for every word, the list of cases that contain it and where. For each wordID
 it stores the number of cases (= df) and a list of `docID → hits`, sorted by docID. The hits
 are the same 4-byte hits as in the forward index (position, title flag, capital flag).
@@ -597,3 +605,4 @@ case.
   200-case sample is included).
 - [nlohmann/json](https://github.com/nlohmann/json) 3.11.3, MIT licence
   (licence text at the top of `third_party/json.hpp`).
+Testting Commits 
