@@ -69,7 +69,7 @@ all lists in order and can be reused.
 
 ### Left (later deadlines)
 
-| Part | Requirement from the course description | Deadline |
+| Part  Requirement from the course description | Deadline |
 |---|---|---|
 | Single-word search | Results in under 500 ms | 16 Dec |
 | Multi-word search | All words must match (also "and"), under 1.5 s for 5 words | 16 Dec |
