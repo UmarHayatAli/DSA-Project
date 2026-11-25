@@ -28,39 +28,49 @@ This README has three parts:
 | Tokenizer | Cleans text into words (also used later for search queries) |
 | Lexicon | word → wordID, plus how often each word appears |
 | Forward index | case → its words and their positions |
+| Inverted index | word → the cases that contain it, with positions |
 
 Each part is explained in [Part 3](#part-3-the-work-done-explained).
 
-### Next step ⏳ Inverted index (Part 1 deadline: 29 Nov)
+### Next step ⏳ Barrels (deadline: 6 Dec)
 
-The inverted index is the forward index "turned around":
+The inverted index (done) is one big file, `inverted.bin`, with the lists of all 221,742
+words in wordID order. Barrels split it into smaller files, each holding the lists of one
+**range of wordIDs**:
 
 ```
-Forward index (done):   case 0     -> goings, against, mills, court, ...
-Inverted index (next):  "court"    -> case 0, case 1, case 5, ...   (with positions)
+inverted.bin (done):   word 0 ... word 221741                     (about 650 MB)
+barrels (next):        barrel_000.bin = words 0 ... 999
+                       barrel_001.bin = words 1000 ... 1999   ...
 ```
 
-This is what makes search fast: to search "negligence", the engine finds its wordID in the
-lexicon and reads only that word's list of cases.
+A search then opens only the barrel that holds a word, never the whole index. This is the
+*Barrels* idea from the Google paper. It also prepares for adding new cases (16 Dec): a new
+case only changes the barrels of its words.
 
 What it must do:
 
-- **Input:** `forward.bin`, `forward_off.bin` and `lexicon.bin` (already built).
-- **Output:** for every wordID, its list of cases (docIDs sorted), with the number of hits
-  and the hits for each case, plus an offset table (wordID → where its list starts in the file).
-- **Memory:** stay well under 2 GB while building (the full dataset has 104 million hits).
-- **Later:** easy to split into barrels (groups of wordIDs) for 6 Dec.
+- **Input:** `inverted.bin`, `inverted_off.bin` and `lexicon.bin` (already built).
+- **Output:** `barrel_NNN.bin` files, each with the lists of a range of wordIDs in the same
+  format as `inverted.bin`, plus a small table: wordID → (barrel number, offset in that barrel).
+- **How to split:** cut `inverted.bin` at wordID boundaries. The offset table already says
+  where each word's list starts, so no list has to be rebuilt. Choose the ranges so the
+  barrels have similar sizes (frequent words like "the" have very long lists, so a fixed
+  number of words per barrel gives very uneven barrels).
+- **Memory:** copy the lists in blocks; never load the whole index.
+- **Check:** every word's list read from its barrel must be identical to its list in
+  `inverted.bin`.
 
 Files to add, following the pattern of the finished parts:
-`include/inverted_index.h`, `src/inverted_index.cpp`, `tests/test_inverted_index.cpp`,
-a check in `src/build_index.cpp`, the new files in `CMakeLists.txt`, and a new section in
-Part 3 of this README.
+`include/barrels.h`, `src/barrels.cpp`, `tests/test_barrels.cpp`, a check in
+`src/build_index.cpp`, the new files in `CMakeLists.txt`, and a new section in Part 3 of
+this README. `InvertedIndexReader` (`include/inverted_index.h`) already reads one list or
+all lists in order and can be reused.
 
 ### Left (later deadlines)
 
 | Part | Requirement from the course description | Deadline |
 |---|---|---|
-| Barrels | Split the inverted index into barrels | 6 Dec |
 | Single-word search | Results in under 500 ms | 16 Dec |
 | Multi-word search | All words must match (also "and"), under 1.5 s for 5 words | 16 Dec |
 | Ranking | Word frequency, position, and at least 2 metadata fields (date, PageRank, court) | 16 Dec |
@@ -149,7 +159,7 @@ cmake --build build               (again after every code change or git pull)
 ctest --test-dir build
 ```
 
-Expected: no errors, and `100% tests passed out of 3`.
+Expected: no errors, and `100% tests passed out of 4`.
 
 ### Step 5: Build the indexes on the 200-case sample (under 1 second)
 
@@ -159,7 +169,7 @@ The sample is already in the repository, so this works without downloading anyth
 build/build_index sample/sample.jsonl index_sample
 ```
 
-Expected: three lines starting with `CHECK OK`. The folder `index_sample/` now holds the
+Expected: four lines starting with `CHECK OK`. The folder `index_sample/` now holds the
 index files; open the `.txt` files in VS Code to look at them.
 
 **For writing and testing code, the sample is enough.** The full dataset is only needed for
@@ -186,16 +196,16 @@ To check progress, run `python scripts/check_download.py` in a **second** termin
 
 Re-running is always safe: finished volumes are skipped. Do not let the laptop sleep while it runs.
 
-### Step 7: Build the indexes on the full dataset (about 1 minute)
+### Step 7: Build the indexes on the full dataset (about 1-2 minutes)
 
 ```
 build/build_index data/cases.jsonl index
 ```
 
-Expected: `cases indexed : 54359`, `distinct words : 221742`, `hits stored : 104633367`,
-and three lines starting with `CHECK OK`.
+Expected: `cases indexed : 54359`, `distinct words : 221742`, `hits stored : 104633367`
+(printed for the forward and the inverted index), and four lines starting with `CHECK OK`.
 
-**✅ You are now at the current level.** The next step is the inverted index (see Part 1).
+**✅ You are now at the current level.** The next step is the barrels (see Part 1).
 
 ### Everyday workflow
 
@@ -244,11 +254,12 @@ DSA-Project/
     tokenizer.h             tokenizer
     lexicon.h               lexicon
     forward_index.h         forward index
+    inverted_index.h        inverted index
   src/
     build_index.cpp         main program: builds and checks all index files
-    docindex.cpp, tokenizer.cpp, lexicon.cpp, forward_index.cpp
+    docindex.cpp, tokenizer.cpp, lexicon.cpp, forward_index.cpp, inverted_index.cpp
   tests/
-    test_tokenizer.cpp, test_lexicon.cpp, test_forward_index.cpp
+    test_tokenizer.cpp, test_lexicon.cpp, test_forward_index.cpp, test_inverted_index.cpp
   third_party/
     json.hpp                nlohmann/json 3.11.3 (MIT licence)
   sample/
@@ -272,6 +283,9 @@ case (one line of cases.jsonl)
   -> tokenizer      : cleans name + head matter + opinions into words
   -> lexicon        : every word gets a wordID, its counts go up
   -> forward index  : the case's words and positions are written to disk
+
+after the last case:
+  -> inverted index : the forward index is turned around (word -> cases)
 ```
 
 At the end it checks its own output and prints one `CHECK OK` line per part.
@@ -487,6 +501,91 @@ for every case:  [docID] [numTokens] [numWords]
 | Hits stored | 104,633,367 (= total tokens) |
 | `forward.bin` / `forward_off.bin` | 649 MB / 435 KB |
 | Full build time (all parts together) | about 45-90 s, depending on the laptop |
+
+## 6. Inverted index
+
+**What it is:** for every word, the list of cases that contain it and where. For each wordID
+it stores the number of cases (= df) and a list of `docID → hits`, sorted by docID. The hits
+are the same 4-byte hits as in the forward index (position, title flag, capital flag).
+Example from `inverted.txt`:
+
+```
+wordID 0  goings  df 20  cf 24
+  0     4    0^T 3^ 1416^ 3366^
+  ...
+```
+
+The `goings` block means: the word is in 20 cases and appears 24 times in total; in case 0
+it appears 4 times, at positions 0, 3, 1416 and 3366 (`^` = capital, `T` = in the case
+title). It is the forward index "turned around":
+
+```
+Forward index:   case 0    -> goings, against, mills, court, ...
+Inverted index:  "court"   -> case 0, case 1, case 5, ...   (with positions)
+```
+
+This is what makes search fast: to search "negligence", the engine finds its wordID in the
+lexicon, jumps to that word's list using the offset table, and reads only that list.
+This is the *Inverted Index* from the Google paper.
+
+**How it is done:** the lexicon already knows df and cf for every word, so the exact size of
+every word's list (`8 + 8 × df + 4 × cf` bytes) and its place in the file are known
+**before** reading the forward index. The words are split into consecutive wordID ranges
+(batches) whose lists fit in a 256 MB buffer. For each batch, `forward.bin` is read once from
+start to end, and every hit of a word in the batch is copied straight to its final place in
+the buffer. The cases are read in docID order, so every list comes out sorted by docID with
+no sorting at all. The buffer is then appended to `inverted.bin`.
+
+- Memory stays under about 300 MB, however big the dataset is (only the buffer grows with
+  the batch size). A word whose list alone is bigger than the buffer gets a batch of its own.
+- Each case's words are sorted by wordID in the forward index, so a binary search finds the
+  first word of the batch in each case.
+- If the forward index and the lexicon do not match (a list ends up too full or not full),
+  the build stops with an error.
+- The lists are stored in wordID order with an offset table, so the file can be cut into
+  barrels at wordID boundaries (next step).
+
+Code: `include/inverted_index.h`, `src/inverted_index.cpp`.
+
+**Commands:**
+
+```
+build/test_inverted_index    23 unit tests, must end with "23 passed, 0 failed"
+```
+
+The tests build the index of 4 small cases once with a large buffer (1 batch) and once with
+a 1-byte buffer (one batch per word); both files must be byte-for-byte identical.
+
+`build_index` (Step 5 / Step 7) must print `CHECK OK: inverted index ...`. The check confirms
+that:
+
+- every word's list has df cases and cf hits (equal to the lexicon), docIDs strictly
+  increasing, hits sorted by position, and the total number of hits equals the total tokens,
+- a checksum over every (word, case, hit) is the same in the forward and the inverted index,
+  so both hold exactly the same hits,
+- for the last, middle and first word, the list read by jumping to its offset matches the
+  forward index record of every case in it.
+
+**Result:** files `inverted.bin` (all words), `inverted_off.bin` (wordID → list position) and
+`inverted.txt` (first 30 words, at most 10 cases and 10 positions each).
+
+Layout of `inverted.bin` (4-byte little-endian numbers):
+
+```
+["INVI"] [number of words]
+for every word:  [wordID] [numDocs]
+                 numDocs times: [docID] [numHits] [hit] [hit] ...
+```
+
+| | |
+|---|---|
+| Hits stored | 104,633,367 (= total tokens, same as the forward index) |
+| Batches | 3 (each one reads `forward.bin` once) |
+| `inverted.bin` / `inverted_off.bin` | about 650 MB / 1.7 MB |
+
+`inverted.bin` is almost exactly as big as `forward.bin`: it holds the same hits and the same
+(word, case) pairs, only with one 8-byte header per word instead of one 12-byte header per
+case.
 
 ---
 
