@@ -40,6 +40,7 @@ add_executable(build_index
     src/tokenizer.cpp
     src/lexicon.cpp
     src/forward_index.cpp
+    src/inverted_index.cpp
 )
 
 # Unit tests.
@@ -57,6 +58,13 @@ add_executable(test_forward_index
     src/tokenizer.cpp
     src/lexicon.cpp
 )
+add_executable(test_inverted_index
+    tests/test_inverted_index.cpp
+    src/inverted_index.cpp
+    src/forward_index.cpp
+    src/tokenizer.cpp
+    src/lexicon.cpp
+)
 
 # On Windows (MinGW), link the C++ runtime into the .exe so it runs
 # without needing extra DLL files next to it.
@@ -65,6 +73,7 @@ if(MINGW)
     target_link_options(test_tokenizer PRIVATE -static)
     target_link_options(test_lexicon PRIVATE -static)
     target_link_options(test_forward_index PRIVATE -static)
+    target_link_options(test_inverted_index PRIVATE -static)
 endif()
 
 # Lets us run all tests with the command:  ctest --test-dir build
@@ -72,3 +81,4 @@ enable_testing()
 add_test(NAME tokenizer COMMAND test_tokenizer)
 add_test(NAME lexicon COMMAND test_lexicon)
 add_test(NAME forward_index COMMAND test_forward_index)
+add_test(NAME inverted_index COMMAND test_inverted_index)

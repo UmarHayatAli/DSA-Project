@@ -9,7 +9,8 @@
 //   Task 4  tokenizer       (cleans the text of each case into words)
 //   Task 5  lexicon         -> lexicon.bin,  lexicon.txt
 //   Task 6  forward index   -> forward.bin, forward_off.bin, forward.txt
-// Coming next: inverted index.
+//   Task 7  inverted index  -> inverted.bin, inverted_off.bin, inverted.txt
+// Coming next: barrels.
 //
 // Usage:
 //   build_index <cases.jsonl> [output folder]
@@ -26,6 +27,7 @@
 
 #include "docindex.h"
 #include "forward_index.h"
+#include "inverted_index.h"
 #include "json.hpp"
 #include "lexicon.h"
 #include "tokenizer.h"
@@ -275,6 +277,138 @@ static bool checkForwardIndex(const Lexicon& lex, const DocIndex& docs,
     return true;
 }
 
+// Mix the bits of a 64-bit number (splitmix64), so that similar inputs give
+// very different outputs. Used for the content checksum below.
+static uint64_t mixBits(uint64_t x) {
+    x += 0x9E3779B97F4A7C15ull;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    return x ^ (x >> 31);
+}
+
+// A number for one stored hit: (word, case, hit). Adding these numbers over all
+// hits gives a checksum that does not depend on the order the hits are read in,
+// so the forward and the inverted index must give the same sum.
+static uint64_t hitKey(uint32_t wordID, uint32_t docID, uint32_t hit) {
+    return mixBits(((static_cast<uint64_t>(wordID) << 32) | docID) ^ mixBits(hit));
+}
+
+// ---------------------------------------------------------------
+// Check the saved inverted index:
+//  1. read inverted.bin from start to end; for every word:
+//     - the list belongs to the right wordID,
+//     - number of cases = df and number of hits = cf from the lexicon,
+//     - docIDs are valid and strictly increasing (each case once),
+//     - every hit list is non-empty and sorted by position,
+//  2. total hits = total tokens,
+//  3. a checksum over every (word, case, hit) is the same in the forward
+//     and the inverted index: both hold exactly the same hits,
+//  4. for the last, middle and first word: jump to its list using the offset
+//     table, and for every case in it check that the forward index record of
+//     that case has exactly the same hits for that word.
+// ---------------------------------------------------------------
+static bool checkInvertedIndex(const Lexicon& lex, size_t numDocs, const std::string& invBin,
+                               const std::string& invOff, const std::string& fwdBin,
+                               const std::string& fwdOff, uint64_t totalTokens) {
+    InvertedIndexReader inv;
+    ForwardIndexReader fwd;
+    if (!inv.open(invBin, invOff) || inv.size() != lex.size()) {
+        std::cout << "  CHECK FAILED: could not open " << invBin << " correctly\n";
+        return false;
+    }
+    if (!fwd.open(fwdBin, fwdOff) || fwd.size() != numDocs) {
+        std::cout << "  CHECK FAILED: could not open " << fwdBin << " correctly\n";
+        return false;
+    }
+
+    uint64_t totalHits = 0, invChecksum = 0;
+    PostingList list;
+    inv.rewind();
+    for (uint32_t w = 0; w < lex.size(); w++) {
+        if (!inv.next(list) || list.wordID != w) {
+            std::cout << "  CHECK FAILED: could not read the list of wordID " << w << "\n";
+            return false;
+        }
+        uint64_t cf = 0;
+        for (size_t i = 0; i < list.docs.size(); i++) {
+            const Posting& p = list.docs[i];
+            if (p.docID >= numDocs || (i > 0 && p.docID <= list.docs[i - 1].docID) ||
+                p.hits.empty()) {
+                std::cout << "  CHECK FAILED: bad case list for \"" << lex.get(w).word << "\"\n";
+                return false;
+            }
+            for (size_t h = 0; h < p.hits.size(); h++) {
+                if (h > 0 && hitPosition(p.hits[h]) <= hitPosition(p.hits[h - 1])) {
+                    std::cout << "  CHECK FAILED: unsorted hits for \"" << lex.get(w).word
+                              << "\" in docID " << p.docID << "\n";
+                    return false;
+                }
+                invChecksum += hitKey(w, p.docID, p.hits[h]);
+            }
+            cf += p.hits.size();
+        }
+        if (list.docs.size() != lex.get(w).df || cf != lex.get(w).cf) {
+            std::cout << "  CHECK FAILED: df/cf of \"" << lex.get(w).word
+                      << "\" in the inverted index differ from the lexicon\n";
+            return false;
+        }
+        totalHits += cf;
+    }
+    if (totalHits != totalTokens) {
+        std::cout << "  CHECK FAILED: total hits (" << totalHits << ") != total tokens ("
+                  << totalTokens << ")\n";
+        return false;
+    }
+
+    uint64_t fwdChecksum = 0;
+    ForwardDoc doc;
+    fwd.rewind();
+    for (uint32_t d = 0; d < numDocs; d++) {
+        if (!fwd.next(doc)) {
+            std::cout << "  CHECK FAILED: could not read the forward record of docID " << d << "\n";
+            return false;
+        }
+        for (const ForwardEntry& e : doc.words) {
+            for (uint32_t hit : e.hits) fwdChecksum += hitKey(e.wordID, d, hit);
+        }
+    }
+    if (fwdChecksum != invChecksum) {
+        std::cout << "  CHECK FAILED: the inverted index does not hold the same hits as the "
+                     "forward index\n";
+        return false;
+    }
+
+    // Random access, compared case by case with the forward index.
+    uint32_t n = static_cast<uint32_t>(lex.size());
+    uint32_t samples[] = {n - 1, n / 2, 0};        // out of order on purpose (tests seeking)
+    for (uint32_t w : samples) {
+        if (!inv.read(w, list)) {
+            std::cout << "  CHECK FAILED: could not jump to the list of wordID " << w << "\n";
+            return false;
+        }
+        for (const Posting& p : list.docs) {
+            if (!fwd.read(p.docID, doc)) {
+                std::cout << "  CHECK FAILED: could not read the forward record of docID "
+                          << p.docID << "\n";
+                return false;
+            }
+            auto it = std::lower_bound(
+                doc.words.begin(), doc.words.end(), w,
+                [](const ForwardEntry& e, uint32_t id) { return e.wordID < id; });
+            if (it == doc.words.end() || it->wordID != w || it->hits != p.hits) {
+                std::cout << "  CHECK FAILED: hits of \"" << lex.get(w).word << "\" in docID "
+                          << p.docID << " differ from the forward index\n";
+                return false;
+            }
+        }
+        std::cout << "  wordID " << w << " \"" << lex.get(w).word << "\" -> "
+                  << list.docs.size() << " cases, matches the forward index\n";
+    }
+    std::cout << "  CHECK OK: inverted index has every hit of the forward index once, "
+                 "df/cf match the lexicon, lists sorted by docID, random access works\n";
+    return true;
+}
+
 // Print the most frequent words (by cf), to see that the counts make sense.
 static void printTopWords(const Lexicon& lex, size_t howMany) {
     std::vector<uint32_t> ids(lex.size());
@@ -389,6 +523,38 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Task 7: turn the forward index around into the inverted index.
+    std::string invBin = outDir + "/inverted.bin", invOff = outDir + "/inverted_off.bin";
+    std::string invTxt = outDir + "/inverted.txt";
+    const uint64_t INVERTED_MEMORY_BUDGET = 256ull << 20;   // 256 MB buffer per batch
+    InvertedBuildStats invStats;
+    auto invStart = std::chrono::steady_clock::now();
+    {
+        ForwardIndexReader reader;
+        std::string error;
+        if (!reader.open(fwdBin, fwdOff)) {
+            std::cerr << "Error: could not open " << fwdBin << "\n";
+            return 1;
+        }
+        if (!buildInvertedIndex(reader, lexicon, invBin, invOff, INVERTED_MEMORY_BUDGET,
+                                invStats, error)) {
+            std::cerr << "Error: inverted index: " << error << "\n";
+            return 1;
+        }
+    }
+    double invSeconds = std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - invStart).count();
+    const size_t INVERTED_TEXT_WORDS = 30;    // only the first words as text
+    {
+        InvertedIndexReader reader;
+        if (!reader.open(invBin, invOff) ||
+            !saveInvertedText(reader, invTxt, INVERTED_TEXT_WORDS, 10, 10,
+                              [&](uint32_t w) { return lexicon.get(w).word; })) {
+            std::cerr << "Error: could not write " << invTxt << "\n";
+            return 1;
+        }
+    }
+
     double seconds = std::chrono::duration<double>(
                          std::chrono::steady_clock::now() - start).count();
 
@@ -419,10 +585,25 @@ int main(int argc, char* argv[]) {
     std::cout << "  " << fwdOff << " : " << fs::file_size(fwdOff) << " bytes\n";
     std::cout << "  " << fwdTxt << " : first " << FORWARD_TEXT_CASES << " cases only\n";
 
+    std::cout << "\nInverted index\n";
+    std::cout << "  words            : " << lexicon.size() << "\n";
+    std::cout << "  (word, case) pairs: " << invStats.totalPostings << "\n";
+    std::cout << "  hits stored      : " << invStats.totalHits << "\n";
+    std::cout << "  batches (passes) : " << invStats.passes << ", largest buffer "
+              << (invStats.largestBatch >> 20) << " MB\n";
+    std::cout << "  build time       : " << invSeconds << " s\n";
+    std::cout << "  " << invBin << " : " << fs::file_size(invBin) << " bytes\n";
+    std::cout << "  " << invOff << " : " << fs::file_size(invOff) << " bytes\n";
+    std::cout << "  " << invTxt << " : first " << INVERTED_TEXT_WORDS << " words only\n";
+
     std::cout << "\nChecks\n";
     if (docIndex.size() == 0) return 1;
     if (!checkDocIndex(docIndex, docBin, inputPath)) return 1;
     if (!checkLexicon(lexicon, lexBin, totalTokens, docIndex.size())) return 1;
     if (!checkForwardIndex(lexicon, docIndex, fwdBin, fwdOff, inputPath, totalTokens)) return 1;
+    if (!checkInvertedIndex(lexicon, docIndex.size(), invBin, invOff, fwdBin, fwdOff,
+                            totalTokens)) {
+        return 1;
+    }
     return 0;
 }
