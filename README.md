@@ -28,14 +28,12 @@ This README has three parts:
 | Tokenizer | Cleans text into words (also used later for search queries) |
 | Lexicon | word → wordID, plus how often each word appears |
 | Forward index | case → its words and their positions |
-| Inverted index ⚠️ | word → the cases that contain it, with positions (code written, **not yet compiled or tested**) |
+| Inverted index | word → the cases that contain it, with positions |
+
+**Part 1 (lexicon, forward index, inverted index) is complete** and tested on the full
+dataset: 4 test programs pass and all 4 index checks print `CHECK OK`.
 
 Each part is explained in [Part 3](#part-3-the-work-done-explained).
-
-> ⚠️ **Inverted index not verified yet.** The code is in `main`, but it has not been compiled
-> or run on any machine. The first team member who builds it should run Step 4 and Step 5,
-> confirm `100% tests passed out of 4` and four `CHECK OK` lines, then remove this note and the
-> ⚠️ marks. If anything fails, fix it before starting the barrels.
 
 ### Next step ⏳ Barrels (deadline: 6 Dec)
 
@@ -505,12 +503,8 @@ for every case:  [docID] [numTokens] [numWords]
 |---|---|
 | Hits stored | 104,633,367 (= total tokens) |
 | `forward.bin` / `forward_off.bin` | 649 MB / 435 KB |
-| Full build time (all parts together) | about 45-90 s, depending on the laptop |
 
 ## 6. Inverted index
-
-> ⚠️ Not compiled or tested yet (see the note in Part 1). The results below are what the code
-> is designed to produce; the sizes are calculated from the forward index, not measured.
 
 **What it is:** for every word, the list of cases that contain it and where. For each wordID
 it stores the number of cases (= df) and a list of `docID → hits`, sorted by docID. The hits
@@ -544,8 +538,8 @@ start to end, and every hit of a word in the batch is copied straight to its fin
 the buffer. The cases are read in docID order, so every list comes out sorted by docID with
 no sorting at all. The buffer is then appended to `inverted.bin`.
 
-- Memory stays under about 300 MB, however big the dataset is (only the buffer grows with
-  the batch size). A word whose list alone is bigger than the buffer gets a batch of its own.
+- The buffer never grows past 256 MB, however big the dataset is. A word whose list alone
+  is bigger than the buffer gets a batch of its own.
 - Each case's words are sorted by wordID in the forward index, so a binary search finds the
   first word of the batch in each case.
 - If the forward index and the lexicon do not match (a list ends up too full or not full),
@@ -587,13 +581,24 @@ for every word:  [wordID] [numDocs]
 
 | | |
 |---|---|
+| Words (lists) | 221,742 |
+| (word, case) pairs | 28,785,040 |
 | Hits stored | 104,633,367 (= total tokens, same as the forward index) |
-| Batches | 3 (each one reads `forward.bin` once) |
-| `inverted.bin` / `inverted_off.bin` | about 650 MB / 1.7 MB |
+| Batches | 3 (each one reads `forward.bin` once), largest buffer 255 MB |
+| `inverted.bin` / `inverted_off.bin` | 651 MB / 1.8 MB |
+| Inverted index build time | about 11 s |
 
 `inverted.bin` is almost exactly as big as `forward.bin`: it holds the same hits and the same
 (word, case) pairs, only with one 8-byte header per word instead of one 12-byte header per
 case.
+
+## Whole build on the full dataset (measured)
+
+| | |
+|---|---|
+| Build time, all parts together | about 60 s (depends on the laptop) |
+| Peak memory (RAM) | 559 MB (limit: 2 GB) |
+| Checks | 4 × `CHECK OK` (document index, lexicon, forward index, inverted index) |
 
 ---
 
@@ -605,4 +610,3 @@ case.
   200-case sample is included).
 - [nlohmann/json](https://github.com/nlohmann/json) 3.11.3, MIT licence
   (licence text at the top of `third_party/json.hpp`).
-Testting Commits 
